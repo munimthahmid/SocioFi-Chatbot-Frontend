@@ -29,6 +29,7 @@ export function ChatPage({ chatId }: { chatId: string }) {
   const [input, setInput] = useState("")
   const [isRecording, setIsRecording] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [chatTitle, setChatTitle] = useState("Chat")
   const router = useRouter()
@@ -309,6 +310,14 @@ export function ChatPage({ chatId }: { chatId: string }) {
     }
   }, [showTaskPrompt, showAnnouncementPrompt])
 
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
   return (
     <div
       className="flex justify-center items-center min-h-screen bg-gradient-to-b from-[#0f172a] to-[#1e293b]"
@@ -389,6 +398,7 @@ export function ChatPage({ chatId }: { chatId: string }) {
                 <p className="text-[#fb923c]">Start a new conversation</p>
               </div>
             )}
+            <div ref={messagesEndRef} /> {/* Add this empty div for scrolling */}
           </div>
 
           {/* Task Prompt */}
