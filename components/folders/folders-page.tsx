@@ -40,9 +40,16 @@ export function FoldersPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const user = getCurrentUser()
+  const [user, setUser] = useState<any>(null)
 
   useEffect(() => {
+    // Get user after component mounts (client-side only)
+    const currentUser = getCurrentUser()
+    setUser(currentUser)
+    if (!currentUser) {
+      router.push('/sign-in')
+      return
+    }
     fetchDocuments()
   }, [])
 

@@ -2,6 +2,9 @@ import type { User } from "@/types/user"
 
 const BACKEND_ENDPOINT = process.env.NEXT_PUBLIC_BACKEND_ENDPOINT || "http://localhost:3000/api"
 
+// Helper function to check if we're on the client side
+const isClient = typeof window !== 'undefined'
+
 export async function signIn(email: string, password: string): Promise<{ access_token: string; user: User }> {
   const formData = new FormData();
   formData.append('username', email);
@@ -17,9 +20,11 @@ export async function signIn(email: string, password: string): Promise<{ access_
   }
 
   const data = await response.json()
-  // Store access_token in localStorage
-  localStorage.setItem('authToken', data.access_token)
-  localStorage.setItem('currentUser', JSON.stringify(data.user))
+  // Only store in localStorage if we're on the client side
+  if (isClient) {
+    localStorage.setItem('authToken', data.access_token)
+    localStorage.setItem('currentUser', JSON.stringify(data.user))
+  }
   return { access_token: data.access_token, user: data.user }
 }
 
@@ -49,22 +54,32 @@ export async function signUp(
   }
 
   const data = await response.json()
-  // Store access_token in localStorage
-  localStorage.setItem('authToken', data.access_token)
-  localStorage.setItem('currentUser', JSON.stringify(data.user))
+  // Only store in localStorage if we're on the client side
+  if (isClient) {
+    localStorage.setItem('authToken', data.access_token)
+    localStorage.setItem('currentUser', JSON.stringify(data.user))
+  }
   return { access_token: data.access_token, user: data.user }
 }
 
 export function signOut(): void {
-  localStorage.removeItem('authToken')
-  localStorage.removeItem('currentUser')
+  if (isClient) {
+    localStorage.removeItem('authToken')
+    localStorage.removeItem('currentUser')
+  }
 }
 
 export function getCurrentUser(): User | null {
+  if (!isClient) {
+    return null
+  }
   const userStr = localStorage.getItem('currentUser')
   return userStr ? JSON.parse(userStr) : null
 }
 
 export function getAuthToken(): string | null {
+  if (!isClient) {
+    return null
+  }
   return localStorage.getItem('authToken')
 }
