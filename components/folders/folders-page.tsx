@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Home, MessageSquare, Folder, User, ArrowLeft, Upload, Download, Trash2, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,6 +9,7 @@ import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { BottomNavigation } from "@/components/layout/bottom-navigation"
+import { getAuthToken, getCurrentUser } from "@/lib/auth"
 
 interface Document {
   id: string
@@ -19,41 +20,78 @@ interface Document {
   accessLevel: string[]
 }
 
-const initialDocuments: Document[] = [
-  {
-    id: "1",
-    name: "Project Proposal.pdf",
-    type: "PDF",
-    size: "2.5 MB",
-    lastModified: "2023-05-15",
-    accessLevel: ["All"],
-  },
-  {
-    id: "2",
-    name: "Financial Report Q2.xlsx",
-    type: "Excel",
-    size: "1.8 MB",
-    lastModified: "2023-06-01",
-    accessLevel: ["CTO", "CFO"],
-  },
-  {
-    id: "3",
-    name: "Marketing Strategy.docx",
-    type: "Word",
-    size: "3.2 MB",
-    lastModified: "2023-06-10",
-    accessLevel: ["CMO", "Employees"],
-  },
-]
+const BACKEND_ENDPOINT = process.env.NEXT_PUBLIC_BACKEND_ENDPOINT || "http://localhost:3000/api"
 
-const accessLevels = ["All", "Founder", "CTO", "CFO", "CMO", "Employees"]
+// Define allowed roles for each user level
+const allowedRolesByLevel = {
+  CEO: ["All", "CEO", "CTO", "Finance", "Admin", "Manager", "Employee"],
+  CTO: ["All", "CTO", "Finance", "Admin", "Manager", "Employee"],
+  Finance: ["All", "Finance", "Admin", "Manager", "Employee"],
+  Admin: ["All", "Admin", "Manager", "Employee"],
+  Manager: ["All", "Manager", "Employee"],
+  Employee: ["All", "Employee"]
+} as const
 
 export function FoldersPage() {
   const router = useRouter()
-  const [documents, setDocuments] = useState<Document[]>(initialDocuments)
+  const [documents, setDocuments] = useState<Document[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [selectedAccess, setSelectedAccess] = useState<string[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const user = getCurrentUser()
+
+  useEffect(() => {
+    fetchDocuments()
+  }, [])
+
+  const getAllowedRoles = () => {
+    const userRole = user?.role || "Employee"
+    return allowedRolesByLevel[userRole as keyof typeof allowedRolesByLevel] || ["Employee"]
+  }
+
+  const fetchDocuments = async () => {
+    try {
+      const response = await fetch(`${BACKEND_ENDPOINT}/documents`, {
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
+      if (response.ok) {
+        const data = await response.json()
+        // Transform backend data to match our frontend model
+        const transformedData = data.map((doc: any) => ({
+          id: doc.id.toString(),
+          name: doc.filename,
+          type: getFileType(doc.file_type),
+          size: `${(doc.file_size / (1024 * 1024)).toFixed(2)} MB`,
+          lastModified: new Date(doc.upload_date).toISOString().split('T')[0],
+          accessLevel: doc.allowed_roles || ['All']
+        }))
+        setDocuments(transformedData)
+      }
+    } catch (error) {
+      console.error("Failed to fetch documents:", error)
+    }
+  }
+
+  const getFileType = (mimeType: string): string => {
+    if (!mimeType) return 'FILE'
+    
+    const typeMap: { [key: string]: string } = {
+      'application/pdf': 'PDF',
+      'application/msword': 'DOC',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
+      'text/plain': 'TXT',
+      'application/json': 'JSON',
+      'text/csv': 'CSV',
+      'application/vnd.ms-excel': 'XLS',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX'
+    }
+    
+    return typeMap[mimeType] || mimeType.split('/')[1].toUpperCase()
+  }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -63,44 +101,123 @@ export function FoldersPage() {
   }
 
   const handleAccessChange = (level: string) => {
+    const allowedRoles = getAllowedRoles()
+    
+    // Only allow changes for roles the user has permission to assign
+    if (!allowedRoles.includes(level)) {
+      return
+    }
+    
     setSelectedAccess((prev) => {
       if (level === "All") {
-        return prev.includes("All") ? [] : accessLevels
+        return prev.includes("All") ? [] : allowedRoles
       } else {
         const newAccess = prev.includes(level)
           ? prev.filter((l) => l !== level && l !== "All")
           : [...prev.filter((l) => l !== "All"), level]
-        return newAccess.length === accessLevels.length - 1 ? accessLevels : newAccess
+        return newAccess.length === allowedRoles.length - 1 ? allowedRoles : newAccess
       }
     })
   }
 
-  const handleUpload = () => {
-    if (selectedFile) {
-      const newDocument: Document = {
-        id: (documents.length + 1).toString(),
-        name: selectedFile.name,
-        type: selectedFile.type.split("/")[1].toUpperCase(),
-        size: `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB`,
-        lastModified: new Date().toISOString().split("T")[0],
-        accessLevel: selectedAccess.length > 0 ? selectedAccess : ["All"],
-      }
-      setDocuments([newDocument, ...documents])
-      setSelectedFile(null)
-      setSelectedAccess([])
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""
+  const handleUpload = async () => {
+    if (selectedFile && selectedAccess.length > 0) {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const formData = new FormData()
+        formData.append('file', selectedFile)
+        formData.append('allowed_roles', JSON.stringify(selectedAccess))
+
+        const response = await fetch(`${BACKEND_ENDPOINT}/documents/upload`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${getAuthToken()}`,
+          },
+          body: formData,
+        })
+
+        if (response.ok) {
+          await fetchDocuments()
+          setSelectedFile(null)
+          setSelectedAccess([])
+          if (fileInputRef.current) {
+            fileInputRef.current.value = ""
+          }
+        } else {
+          const errorData = await response.json()
+          const errorMessage = errorData.detail.split(': ').pop()
+          setError(errorMessage)
+        }
+      } catch (error) {
+        setError('Something went wrong. Please try again.')
+      } finally {
+        setIsLoading(false)
       }
     }
   }
 
-  const handleDelete = (id: string) => {
-    setDocuments(documents.filter((doc) => doc.id !== id))
+  const handleDelete = async (document: Document) => {
+    try {
+      const response = await fetch(`${BACKEND_ENDPOINT}/documents/${document.id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
+      
+      if (response.ok) {
+        await fetchDocuments()
+      }
+    } catch (error) {
+      console.error("Failed to delete document:", error)
+    }
   }
 
-  const handleDownload = (document: Document) => {
-    // In a real application, this would initiate a file download
-    console.log(`Downloading ${document.name}`)
+  const handleDownload = async (doc: Document) => {
+    try {
+      const response = await fetch(`${BACKEND_ENDPOINT}/documents/download/${doc.id}`, {
+        headers: {
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
+      
+      if (response.ok) {
+        // Get filename from Content-Disposition header if available
+        const contentDisposition = response.headers.get('Content-Disposition')
+        let filename = doc.name
+        console.log(filename)
+        if (contentDisposition) {
+          const filenameMatch = contentDisposition.match(/filename=(.+)/)
+          if (filenameMatch) {
+            filename = filenameMatch[1]
+          }
+        }
+
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const link = window.document.createElement('a')
+        link.style.display = 'none'
+        link.href = url
+        link.download = filename
+        
+        // Need to append to document to work in Firefox
+        window.document.body.appendChild(link)
+        link.click()
+        
+        // Cleanup
+        setTimeout(() => {
+          window.document.body.removeChild(link)
+          window.URL.revokeObjectURL(url)
+        }, 100)
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to download document' }))
+        setError(errorData.detail)
+      }
+    } catch (error) {
+      console.error("Failed to download document:", error)
+      setError("Failed to download document")
+    }
   }
 
   return (
@@ -152,7 +269,7 @@ export function FoldersPage() {
             </Button>
           </div>
           <div className="mb-2 grid grid-cols-2 gap-2">
-            {accessLevels.map((level) => (
+            {getAllowedRoles().map((level) => (
               <div key={level} className="flex items-center space-x-2">
                 <Checkbox
                   id={level}
@@ -168,8 +285,22 @@ export function FoldersPage() {
               </div>
             ))}
           </div>
-          <Button onClick={handleUpload} disabled={!selectedFile} className="w-full bg-primary text-[#f97316]">
-            <Upload className="w-4 h-4 mr-2 text-[#f97316]" /> Upload File
+          {error && (
+            <div className="mb-2 text-sm text-red-500 bg-red-100/10 p-2 rounded">
+              {error}
+            </div>
+          )}
+          <Button onClick={handleUpload} disabled={!selectedFile || isLoading} className="w-full bg-primary text-[#f97316]">
+            {isLoading ? (
+              <div className="flex items-center justify-center">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent animate-spin mr-2" />
+                Uploading...
+              </div>
+            ) : (
+              <>
+                <Upload className="w-4 h-4 mr-2 text-[#f97316]" /> Upload File
+              </>
+            )}
           </Button>
         </div>
 
@@ -193,7 +324,7 @@ export function FoldersPage() {
                 <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)}>
                   <Download className="w-4 h-4 text-[#f97316]" />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => handleDelete(doc.id)}>
+                <Button variant="ghost" size="icon" onClick={() => handleDelete(doc)}>
                   <Trash2 className="w-4 h-4 text-[#f97316]" />
                 </Button>
                 <Lock className="w-4 h-4 text-[#fb923c]" title={`Access: ${doc.accessLevel.join(", ")}`} />
@@ -210,4 +341,3 @@ export function FoldersPage() {
     </div>
   )
 }
-

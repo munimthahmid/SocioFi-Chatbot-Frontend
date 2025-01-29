@@ -99,6 +99,11 @@ export function ChatPage({ chatId }: { chatId: string }) {
   }
 
   const sendMessage = async (content: string) => {
+    // Immediately add user's message to UI
+    const userMessage = { role: "user", content: content, created_at: new Date().toISOString() }
+    setMessages(prev => [...prev, userMessage])
+    setInput("")  // Clear input immediately
+
     try {
       const response = await fetch(`${BACKEND_ENDPOINT}/chatbot/chats/${chatId}/messages`, {
         method: "POST",
@@ -112,14 +117,14 @@ export function ChatPage({ chatId }: { chatId: string }) {
       if (response.ok) {
         const data = await response.json()
         console.log("data: ", data)
+        // Add only the assistant's response
         setMessages(prev => [...prev, 
-          { role: "user", content: content, created_at: new Date().toISOString() },
           { role: "assistant", content: data.content, created_at: new Date().toISOString() }
         ])
-        setInput("")
       }
     } catch (error) {
       console.error("Failed to send message:", error)
+      // Optionally show an error message to the user
     }
   }
 
@@ -210,18 +215,9 @@ export function ChatPage({ chatId }: { chatId: string }) {
         //This is a task assignment
         const taskDetails = input.trim()
         const taskTitle = generateTaskTitle(taskDetails)
-        newMessage = {
-          role: "user",
-          content: `@assign @${selectedUser.email} ${taskDetails}`,
-          assignedTo: selectedUser.email,
-          taskTitle: taskTitle,
-          taskDetails: taskDetails,
-        }
-        setShowTaskPrompt(false)
 
-        // Store task in the backend
         try {
-          await fetch(`${BACKEND_ENDPOINT}/tasks`, {
+          const response = await fetch(`${BACKEND_ENDPOINT}/tasks/create?chat_id=${chatId}`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -234,6 +230,20 @@ export function ChatPage({ chatId }: { chatId: string }) {
               status: "Planning",
             }),
           })
+
+          if (response.ok) {
+            const data = await response.json()
+            console.log("task data: ", data)
+
+            // Append the returned messages (user, task, assistant) to the state
+            setMessages((prev) => [...prev, ...data])
+
+            // Clear input and close prompt
+            setInput("")
+            setShowTaskPrompt(false)
+          } else {
+            console.error("Failed to create task")
+          }
         } catch (error) {
           console.error("Failed to store task:", error)
         }
